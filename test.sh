@@ -16,7 +16,12 @@ cleanup() {
     sudo kill "$DAEMON_PID" 2>/dev/null || true
     sudo rm -f "$ACCENTD_SOCK"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
+
+# Kill any leftover test processes from previous runs
+pkill -f "target/release/accentd-popup" 2>/dev/null || true
+sudo pkill -f "target/release/accentd " 2>/dev/null || true
+sleep 0.2
 
 echo "Starting daemon..."
 sudo -E target/release/accentd &
