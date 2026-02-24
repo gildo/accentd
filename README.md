@@ -4,9 +4,7 @@ Press-and-hold accent character popup for Linux, like macOS.
 
 Hold a letter key (e.g. `e`) for 300ms and a popup appears with numbered accented variants:
 
-```
-1:è  2:é  3:ê  4:ë
-```
+<img width="302" height="59" alt="Screenshot From 2026-02-24 15-17-36" src="https://github.com/user-attachments/assets/5ae79ed9-f0bb-4706-be8a-62f45080d57e" />
 
 Press a number to replace the letter. Release or press ESC to cancel.
 
