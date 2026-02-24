@@ -46,6 +46,7 @@ pub struct StateMachine {
     locale_map: HashMap<String, Vec<String>>,
     threshold_ms: u64,
     popup_timeout_ms: u64,
+    keep_open: bool,
     enabled: bool,
     /// Track modifier state.
     ctrl_held: bool,
@@ -61,6 +62,7 @@ impl StateMachine {
             locale_map,
             threshold_ms: config.general.threshold_ms,
             popup_timeout_ms: config.popup.timeout_ms,
+            keep_open: config.popup.keep_open,
             enabled: config.general.enabled,
             ctrl_held: false,
             alt_held: false,
@@ -274,8 +276,12 @@ impl StateMachine {
             return vec![Action::Suppress];
         }
 
-        // Release of the held key: dismiss popup, keep base char
+        // Release of the held key
         if code == popup_code && value == 0 {
+            if self.keep_open {
+                // macOS style: popup stays open, suppress the release
+                return vec![Action::Suppress];
+            }
             debug!("popup dismissed: held key released");
             self.state = State::Idle;
             return vec![
@@ -575,11 +581,18 @@ mod tests {
         assert!(sm.is_idle());
     }
 
-    // === SPEC: In popup, release held key → dismiss ===
+    // === SPEC: In popup, release held key → keep_open=true keeps popup, keep_open=false dismisses ===
+
+    fn make_sm_keep_open(keep_open: bool) -> StateMachine {
+        let mut config = Config::default();
+        config.popup.keep_open = keep_open;
+        let locale_map = builtin_locale("it");
+        StateMachine::new(&config, locale_map)
+    }
 
     #[test]
-    fn popup_release_held_key_dismisses() {
-        let mut sm = make_sm();
+    fn popup_release_held_key_dismisses_when_keep_open_false() {
+        let mut sm = make_sm_keep_open(false);
         sm.process_event(key_press(KEY_E));
         std::thread::sleep(std::time::Duration::from_millis(350));
         sm.check_timer();
@@ -587,6 +600,52 @@ mod tests {
         let actions = sm.process_event(key_release(KEY_E));
         assert!(has_hide_popup(&actions));
         assert!(has_emit_accent(&actions).is_none());
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn popup_release_held_key_keeps_popup_when_keep_open_true() {
+        let mut sm = make_sm_keep_open(true);
+        sm.process_event(key_press(KEY_E));
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        sm.check_timer();
+
+        let actions = sm.process_event(key_release(KEY_E));
+        assert!(has_suppress(&actions), "release should be suppressed");
+        assert!(!has_hide_popup(&actions), "popup should stay open");
+        assert!(!sm.is_idle(), "should still be in popup state");
+    }
+
+    #[test]
+    fn popup_keep_open_then_select_accent() {
+        let mut sm = make_sm_keep_open(true);
+        sm.process_event(key_press(KEY_E));
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        sm.check_timer();
+
+        // Release the key — popup stays
+        sm.process_event(key_release(KEY_E));
+
+        // Now press a digit to select
+        let actions = sm.process_event(key_press(KEY_1));
+        assert!(has_hide_popup(&actions));
+        assert_eq!(has_emit_accent(&actions), Some("è"));
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn popup_keep_open_then_esc_dismisses() {
+        let mut sm = make_sm_keep_open(true);
+        sm.process_event(key_press(KEY_E));
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        sm.check_timer();
+
+        // Release the key — popup stays
+        sm.process_event(key_release(KEY_E));
+
+        // ESC dismisses
+        let actions = sm.process_event(key_press(KEY_ESC));
+        assert!(has_hide_popup(&actions));
         assert!(sm.is_idle());
     }
 

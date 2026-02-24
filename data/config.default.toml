@@ -5,6 +5,7 @@ enabled = true
 [popup]
 font_size = 24
 timeout_ms = 5000
+keep_open = true
 
 [locale]
 active = "it"

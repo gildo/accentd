@@ -41,11 +41,14 @@ pub struct PopupConfig {
     pub font_size: u32,
     #[serde(default = "PopupConfig::default_timeout")]
     pub timeout_ms: u64,
+    #[serde(default = "PopupConfig::default_keep_open")]
+    pub keep_open: bool,
 }
 
 impl PopupConfig {
     fn default_font_size() -> u32 { 24 }
     fn default_timeout() -> u64 { 5000 }
+    fn default_keep_open() -> bool { true }
 }
 
 impl Default for PopupConfig {
@@ -53,6 +56,7 @@ impl Default for PopupConfig {
         Self {
             font_size: 24,
             timeout_ms: 5000,
+            keep_open: true,
         }
     }
 }
@@ -178,6 +182,12 @@ mod tests {
     fn default_popup_timeout_is_5000() {
         let config = Config::default();
         assert_eq!(config.popup.timeout_ms, 5000);
+    }
+
+    #[test]
+    fn default_popup_keep_open_is_true() {
+        let config = Config::default();
+        assert!(config.popup.keep_open);
     }
 
     // --- spec: TOML parsing ---

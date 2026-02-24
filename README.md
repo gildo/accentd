@@ -6,7 +6,7 @@ Hold a letter key (e.g. `e`) for 300ms and a popup appears with numbered accente
 
 <img width="302" height="59" alt="Screenshot From 2026-02-24 15-17-36" src="https://github.com/user-attachments/assets/5ae79ed9-f0bb-4706-be8a-62f45080d57e" />
 
-Press a number to replace the letter. Release or press ESC to cancel.
+Press a number to replace the letter. Press ESC to cancel.
 
 Works on any desktop environment and display server: GNOME, KDE, Sway, Hyprland, X11, Wayland. Operates at the evdev/uinput level, same as keyd and kanata.
 
@@ -14,8 +14,9 @@ Works on any desktop environment and display server: GNOME, KDE, Sway, Hyprland,
 
 1. You press `e` -- it appears **immediately** (zero latency)
 2. You hold for 300ms -- repeat stops, popup shows accented variants
-3. You press `2` -- backspace + `é` is emitted. Popup closes
-4. Or you release/ESC -- popup closes, original `e` stays
+3. You release the key -- popup stays open (macOS-style, configurable)
+4. You press `2` -- backspace + `é` is emitted. Popup closes
+5. Or you press ESC -- popup closes, original `e` stays
 
 **Fast typing is never affected.** If you press another key within 300ms, the hold timer cancels instantly. Only accent-eligible keys (a, c, e, i, n, o, s, u, y) trigger detection.
 
@@ -123,6 +124,7 @@ enabled = true
 [popup]
 font_size = 24
 timeout_ms = 5000    # auto-dismiss popup after 5s
+keep_open = true     # macOS-style: popup stays after key release
 
 [locale]
 active = "it"
