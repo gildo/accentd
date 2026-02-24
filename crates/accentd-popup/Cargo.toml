@@ -1,0 +1,15 @@
+[package]
+name = "accentd-popup"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+accentd-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+gtk4 = "0.9"
+gtk4-layer-shell = "0.4"

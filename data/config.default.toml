@@ -1,0 +1,10 @@
+[general]
+threshold_ms = 300
+enabled = true
+
+[popup]
+font_size = 24
+timeout_ms = 5000
+
+[locale]
+active = "it"

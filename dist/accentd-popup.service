@@ -1,0 +1,13 @@
+[Unit]
+Description=Accent character popup (accentd UI)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/accentd-popup
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,11 @@
+[package]
+name = "accentctl"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+accentd-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }

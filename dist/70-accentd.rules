@@ -1,0 +1,2 @@
+# Allow accentd to access /dev/uinput for virtual keyboard emulation
+KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"

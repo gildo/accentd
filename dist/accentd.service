@@ -1,0 +1,31 @@
+[Unit]
+Description=Accent character daemon (press-and-hold popup)
+After=systemd-logind.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/accentd
+Restart=on-failure
+RestartSec=3
+# Run as root to access /dev/input, but the daemon only reads evdev and writes uinput
+# Alternatively, use SupplementaryGroups=input and a dedicated user
+SupplementaryGroups=input
+
+# Security hardening
+ProtectHome=yes
+ProtectSystem=strict
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictRealtime=yes
+LockPersonality=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ReadWritePaths=/run/accentd.sock
+DeviceAllow=/dev/input/* rw
+DeviceAllow=/dev/uinput rw
+
+[Install]
+WantedBy=multi-user.target
