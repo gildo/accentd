@@ -47,15 +47,20 @@ Communication is via a Unix socket with JSON-lines messages.
 
 ## Install
 
-### Arch Linux
+### Arch Linux (AUR)
 
 ```bash
-cd ~/src/accentd
-makepkg -si -p dist/PKGBUILD
+paru -S accentd   # or yay -S accentd
 
 # Then enable
 sudo systemctl enable --now accentd
 systemctl --user enable --now accentd-popup
+```
+
+Your user must be in the `input` group (log out and back in after):
+
+```bash
+sudo usermod -aG input $USER
 ```
 
 ### From source (any distro)
@@ -87,14 +92,7 @@ sudo systemctl enable --now accentd
 systemctl --user enable --now accentd-popup
 ```
 
-### Permissions
-
-The daemon needs access to `/dev/input/event*` (read keyboards) and `/dev/uinput` (emit keystrokes). The included udev rule and systemd service handle this. Your user must be in the `input` group:
-
-```bash
-sudo usermod -aG input $USER
-# Log out and back in
-```
+The daemon needs access to `/dev/input/event*` and `/dev/uinput`. The included udev rule handles this. Your user must be in the `input` group (log out and back in after `usermod`).
 
 ## Usage
 
