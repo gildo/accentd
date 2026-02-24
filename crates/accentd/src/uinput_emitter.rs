@@ -1,3 +1,4 @@
+use crate::compose::EventEmitter;
 use anyhow::{Context, Result};
 use evdev::uinput::VirtualDeviceBuilder;
 use evdev::uinput::VirtualDevice;
@@ -22,7 +23,7 @@ pub fn create_virtual_device() -> Result<VirtualDevice> {
     Ok(vdev)
 }
 
-pub fn relay_event(vdev: &mut VirtualDevice, event: &InputEvent) -> Result<()> {
-    vdev.emit(&[*event])?;
+pub fn relay_event(emitter: &mut impl EventEmitter, event: &InputEvent) -> Result<()> {
+    emitter.emit_events(&[*event])?;
     Ok(())
 }

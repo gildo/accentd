@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "accentctl"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accentd-core",
  "anyhow",
@@ -15,7 +15,7 @@ dependencies = [
 
 [[package]]
 name = "accentd"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accentd-core",
  "anyhow",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "accentd-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "dirs",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "accentd-popup"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accentd-core",
  "anyhow",

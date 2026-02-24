@@ -28,6 +28,11 @@ pub fn find_keyboards() -> Result<Vec<PathBuf>> {
 
         match Device::open(&path) {
             Ok(dev) => {
+                // Skip our own virtual device to avoid feedback loop
+                if dev.name().map_or(false, |n| n.contains("accentd")) {
+                    debug!(path = %path.display(), name = ?dev.name(), "skipping own virtual device");
+                    continue;
+                }
                 if is_keyboard(&dev) {
                     info!(path = %path.display(), name = ?dev.name(), "found keyboard");
                     keyboards.push(path);
