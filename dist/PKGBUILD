@@ -1,6 +1,6 @@
 # Maintainer: Ermenegildo Fiorito <gildo.fiorito@gmail.com>
 pkgname=accentd
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Press-and-hold accent character popup for Linux (macOS-style)"
 arch=('x86_64')

@@ -137,11 +137,11 @@ impl Config {
 
 pub fn socket_path() -> PathBuf {
     // ACCENTD_SOCK env var overrides for testing.
-    // Default: /run/accentd.sock (shared between root daemon and user popup).
+    // Default: /run/accentd/accentd.sock (created by RuntimeDirectory=accentd in systemd).
     if let Ok(path) = std::env::var("ACCENTD_SOCK") {
         return PathBuf::from(path);
     }
-    PathBuf::from("/run/accentd.sock")
+    PathBuf::from("/run/accentd/accentd.sock")
 }
 
 #[cfg(test)]

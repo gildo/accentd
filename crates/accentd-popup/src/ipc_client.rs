@@ -7,11 +7,19 @@ use std::sync::mpsc as std_mpsc;
 use tracing::{info, warn};
 
 /// Connect to the daemon and register as a popup client.
+/// Retries a few times to handle the case where the popup starts before the daemon.
 /// Returns a receiver for daemon messages and the write stream (kept alive).
 pub fn connect() -> Result<(std_mpsc::Receiver<DaemonMsg>, UnixStream)> {
     let socket_path = config::socket_path();
-    let stream = UnixStream::connect(&socket_path)
-        .with_context(|| format!("connecting to {}", socket_path.display()))?;
+    let stream = {
+        let mut result = UnixStream::connect(&socket_path);
+        for _ in 0..9 {
+            if result.is_ok() { break; }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            result = UnixStream::connect(&socket_path);
+        }
+        result.with_context(|| format!("connecting to {}", socket_path.display()))?
+    };
 
     let mut write_stream = stream.try_clone().context("cloning stream")?;
 

@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o660)).ok();
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o666)).ok();
     }
     info!(path = %socket_path.display(), "IPC socket listening");
 

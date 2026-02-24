@@ -23,9 +23,7 @@ ProtectClock=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
-ReadWritePaths=/run/accentd.sock
-DeviceAllow=/dev/input/* rw
-DeviceAllow=/dev/uinput rw
+RuntimeDirectory=accentd
 
 [Install]
 WantedBy=multi-user.target
