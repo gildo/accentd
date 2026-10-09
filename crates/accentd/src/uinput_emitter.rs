@@ -1,17 +1,16 @@
 use crate::compose::EventEmitter;
 use anyhow::{Context, Result};
-use evdev::uinput::VirtualDeviceBuilder;
 use evdev::uinput::VirtualDevice;
-use evdev::{AttributeSet, InputEvent, Key};
+use evdev::{AttributeSet, InputEvent, KeyCode};
 use tracing::info;
 
 pub fn create_virtual_device() -> Result<VirtualDevice> {
-    let mut keys = AttributeSet::<Key>::new();
+    let mut keys = AttributeSet::<KeyCode>::new();
     for code in 0..=255u16 {
-        keys.insert(Key::new(code));
+        keys.insert(KeyCode::new(code));
     }
 
-    let vdev = VirtualDeviceBuilder::new()
+    let vdev = VirtualDevice::builder()
         .context("creating VirtualDeviceBuilder")?
         .name("accentd virtual keyboard")
         .with_keys(&keys)

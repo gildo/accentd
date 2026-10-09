@@ -3,8 +3,8 @@ post_install() {
     udevadm control --reload-rules 2>/dev/null || true
 
     echo ""
-    echo ":: To enable accentd:"
-    echo "   sudo systemctl enable --now accentd"
+    echo ":: To enable accentd (runs as your user, not root):"
+    echo "   systemctl --user enable --now accentd"
     echo "   systemctl --user enable --now accentd-popup"
     echo ""
     echo ":: Your user must be in the 'input' group:"
@@ -19,14 +19,12 @@ post_upgrade() {
     echo ":: Reloading udev rules..."
     udevadm control --reload-rules 2>/dev/null || true
 
-    echo ":: Restarting accentd..."
-    systemctl restart accentd 2>/dev/null || true
-    echo ":: Restart accentd-popup manually:"
-    echo "   systemctl --user restart accentd-popup"
+    echo ""
+    echo ":: Restart the user services:"
+    echo "   systemctl --user restart accentd accentd-popup"
 }
 
 pre_remove() {
-    echo ":: Stopping accentd services..."
-    systemctl --user disable --now accentd-popup 2>/dev/null || true
-    systemctl disable --now accentd 2>/dev/null || true
+    echo ":: Disable the user services:"
+    echo "   systemctl --user disable --now accentd accentd-popup"
 }

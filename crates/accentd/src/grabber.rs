@@ -29,7 +29,7 @@ pub fn find_keyboards() -> Result<Vec<PathBuf>> {
         match Device::open(&path) {
             Ok(dev) => {
                 // Skip our own virtual device to avoid feedback loop
-                if dev.name().map_or(false, |n| n.contains("accentd")) {
+                if dev.name().is_some_and(|n| n.contains("accentd")) {
                     debug!(path = %path.display(), name = ?dev.name(), "skipping own virtual device");
                     continue;
                 }
@@ -55,9 +55,9 @@ fn is_keyboard(dev: &Device) -> bool {
     };
 
     // Must have KEY_A (30), KEY_Z (44), KEY_ENTER (28)
-    keys.contains(evdev::Key::KEY_A)
-        && keys.contains(evdev::Key::KEY_Z)
-        && keys.contains(evdev::Key::KEY_ENTER)
+    keys.contains(evdev::KeyCode::KEY_A)
+        && keys.contains(evdev::KeyCode::KEY_Z)
+        && keys.contains(evdev::KeyCode::KEY_ENTER)
 }
 
 /// Grab a keyboard device and forward events to the channel.
@@ -67,8 +67,7 @@ pub async fn grab_device(
     device_idx: usize,
     tx: mpsc::UnboundedSender<DeviceEvent>,
 ) -> Result<()> {
-    let mut dev = Device::open(&path)
-        .with_context(|| format!("opening {}", path.display()))?;
+    let mut dev = Device::open(&path).with_context(|| format!("opening {}", path.display()))?;
 
     let dev_name = dev.name().unwrap_or("unknown").to_string();
     info!(device = %dev_name, path = %path.display(), "grabbing device");
@@ -77,8 +76,7 @@ pub async fn grab_device(
         .with_context(|| format!("grabbing {}", path.display()))?;
 
     // Wrap in tokio AsyncDevice for non-blocking reads
-    let mut stream = dev.into_event_stream()
-        .context("creating event stream")?;
+    let mut stream = dev.into_event_stream().context("creating event stream")?;
 
     loop {
         match stream.next_event().await {

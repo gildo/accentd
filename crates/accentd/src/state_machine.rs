@@ -1,7 +1,7 @@
 use accentd_core::charmap;
 use accentd_core::config::Config;
 use accentd_core::ipc::DaemonMsg;
-use evdev::{EventType, InputEvent, Key};
+use evdev::{EventType, InputEvent, KeyCode};
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::debug;
@@ -39,6 +39,24 @@ pub enum Action {
     EmitAccent(String),
     /// Suppress this event (don't relay).
     Suppress,
+}
+
+/// Map a selection digit (`1`..`9`, `0`) to its slot index in an accent vector.
+fn slot_index(digit: u8) -> usize {
+    if digit == 0 {
+        9
+    } else {
+        digit as usize - 1
+    }
+}
+
+/// Map a slot index to its selection digit (`1`..`9`, `0` for the tenth).
+fn slot_label(index: usize) -> u8 {
+    if index < 9 {
+        (index + 1) as u8
+    } else {
+        0
+    }
 }
 
 pub struct StateMachine {
@@ -101,13 +119,18 @@ impl StateMachine {
                 if started.elapsed().as_millis() as u64 >= self.threshold_ms {
                     debug!(base = %base, "hold threshold reached, showing popup");
 
-                    let release = InputEvent::new(EventType::KEY, *key_code, 0);
-                    let labels: Vec<u8> = (1..=accents.len() as u8).collect();
+                    let release = InputEvent::new(EventType::KEY.0, *key_code, 0);
+                    let (labels, variants): (Vec<u8>, Vec<String>) = accents
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, accent)| !accent.is_empty())
+                        .map(|(index, accent)| (slot_label(index), accent.clone()))
+                        .unzip();
                     let actions = vec![
                         Action::Relay(release),
                         Action::SendPopup(DaemonMsg::ShowPopup {
                             base: base.clone(),
-                            accents: accents.clone(),
+                            accents: variants,
                             labels,
                         }),
                     ];
@@ -149,12 +172,15 @@ impl StateMachine {
         }
     }
 
-    /// IPC: select accent by 1-indexed number. Returns actions if in Popup state.
-    pub fn ipc_select(&mut self, index: u8) -> Vec<Action> {
+    /// IPC: select an accent by its slot digit (`1`..`9`, `0`). Returns actions
+    /// if in Popup state.
+    pub fn ipc_select(&mut self, digit: u8) -> Vec<Action> {
         if let State::Popup { ref accents, .. } = self.state {
-            let idx = (index - 1) as usize;
-            if idx < accents.len() {
-                let accent = accents[idx].clone();
+            let accent = accents
+                .get(slot_index(digit))
+                .filter(|accent| !accent.is_empty());
+            if let Some(accent) = accent {
+                let accent = accent.clone();
                 self.state = State::Idle;
                 return vec![
                     Action::SendPopup(DaemonMsg::HidePopup),
@@ -215,7 +241,7 @@ impl StateMachine {
         let shift = self.shift_held;
         if let Some(base) = charmap::keycode_to_base(code) {
             if let Some(accents) = charmap::resolve_accents(&self.locale_map, base, shift) {
-                if !accents.is_empty() {
+                if accents.iter().any(|accent| !accent.is_empty()) {
                     debug!(base = %base, shift, "starting hold timer");
                     self.state = State::Holding {
                         base: base.to_string(),
@@ -236,9 +262,7 @@ impl StateMachine {
 
     fn handle_holding(&mut self, event: InputEvent, code: u16, value: i32) -> Vec<Action> {
         let (held_code, held_base) = match &self.state {
-            State::Holding {
-                key_code, base, ..
-            } => (*key_code, base.clone()),
+            State::Holding { key_code, base, .. } => (*key_code, base.clone()),
             _ => unreachable!(),
         };
 
@@ -267,7 +291,9 @@ impl StateMachine {
 
     fn handle_popup(&mut self, event: InputEvent, code: u16, value: i32) -> Vec<Action> {
         let (popup_accents, popup_code) = match &self.state {
-            State::Popup { accents, key_code, .. } => (accents.clone(), *key_code),
+            State::Popup {
+                accents, key_code, ..
+            } => (accents.clone(), *key_code),
             _ => unreachable!(),
         };
 
@@ -291,27 +317,30 @@ impl StateMachine {
         }
 
         // ESC press: dismiss popup
-        if code == Key::KEY_ESC.code() && value == 1 {
+        if code == KeyCode::KEY_ESC.code() && value == 1 {
             debug!("popup dismissed: ESC pressed");
             self.state = State::Idle;
-            return vec![
-                Action::SendPopup(DaemonMsg::HidePopup),
-                Action::Suppress,
-            ];
+            return vec![Action::SendPopup(DaemonMsg::HidePopup), Action::Suppress];
         }
 
-        // Number key press: select accent
+        // Number key press: select accent by its fixed slot
         if value == 1 {
             if let Some(digit) = charmap::keycode_to_digit(code) {
-                let idx = (digit - 1) as usize;
-                if idx < popup_accents.len() {
-                    let accent = popup_accents[idx].clone();
-                    debug!(accent = %accent, index = digit, "accent selected");
-                    self.state = State::Idle;
-                    return vec![
-                        Action::SendPopup(DaemonMsg::HidePopup),
-                        Action::EmitAccent(accent),
-                    ];
+                match popup_accents.get(slot_index(digit)) {
+                    Some(accent) if !accent.is_empty() => {
+                        let accent = accent.clone();
+                        debug!(accent = %accent, index = digit, "accent selected");
+                        self.state = State::Idle;
+                        return vec![
+                            Action::SendPopup(DaemonMsg::HidePopup),
+                            Action::EmitAccent(accent),
+                        ];
+                    }
+                    Some(_) => {
+                        // The slot exists but this letter has no variant there.
+                        return vec![Action::Suppress];
+                    }
+                    None => {}
                 }
             }
         }
@@ -339,29 +368,29 @@ impl StateMachine {
         let pressed = event.value() == 1;
         let released = event.value() == 0;
 
-        match Key::new(code) {
-            Key::KEY_LEFTCTRL | Key::KEY_RIGHTCTRL => {
+        match KeyCode::new(code) {
+            KeyCode::KEY_LEFTCTRL | KeyCode::KEY_RIGHTCTRL => {
                 if pressed {
                     self.ctrl_held = true;
                 } else if released {
                     self.ctrl_held = false;
                 }
             }
-            Key::KEY_LEFTALT | Key::KEY_RIGHTALT => {
+            KeyCode::KEY_LEFTALT | KeyCode::KEY_RIGHTALT => {
                 if pressed {
                     self.alt_held = true;
                 } else if released {
                     self.alt_held = false;
                 }
             }
-            Key::KEY_LEFTMETA | Key::KEY_RIGHTMETA => {
+            KeyCode::KEY_LEFTMETA | KeyCode::KEY_RIGHTMETA => {
                 if pressed {
                     self.super_held = true;
                 } else if released {
                     self.super_held = false;
                 }
             }
-            Key::KEY_LEFTSHIFT | Key::KEY_RIGHTSHIFT => {
+            KeyCode::KEY_LEFTSHIFT | KeyCode::KEY_RIGHTSHIFT => {
                 if pressed {
                     self.shift_held = true;
                 } else if released {
@@ -381,11 +410,13 @@ mod tests {
     // Helpers to create events without caring about implementation details.
     // evdev keycodes from Linux input-event-codes.h:
     const KEY_A: u16 = 30;
+    const KEY_C: u16 = 46;
     const KEY_E: u16 = 18;
     const KEY_F: u16 = 33; // not accent-eligible
     const KEY_1: u16 = 2;
     const KEY_2: u16 = 3;
     const KEY_9: u16 = 10;
+    const KEY_0: u16 = 11;
     const KEY_ESC: u16 = 1;
     const KEY_LEFTCTRL: u16 = 29;
     const KEY_LEFTALT: u16 = 56;
@@ -393,19 +424,37 @@ mod tests {
     const KEY_LEFTSHIFT: u16 = 42;
 
     fn key_press(code: u16) -> InputEvent {
-        InputEvent::new(EventType::KEY, code, 1)
+        InputEvent::new(EventType::KEY.0, code, 1)
     }
     fn key_release(code: u16) -> InputEvent {
-        InputEvent::new(EventType::KEY, code, 0)
+        InputEvent::new(EventType::KEY.0, code, 0)
     }
     fn key_repeat(code: u16) -> InputEvent {
-        InputEvent::new(EventType::KEY, code, 2)
+        InputEvent::new(EventType::KEY.0, code, 2)
     }
 
     fn make_sm() -> StateMachine {
         let config = Config::default(); // threshold=300ms, enabled=true, locale=it
         let locale_map = builtin_locale("it");
         StateMachine::new(&config, locale_map)
+    }
+
+    fn make_sm_unicode() -> StateMachine {
+        let config = Config::default();
+        let locale_map = builtin_locale("unicode");
+        StateMachine::new(&config, locale_map)
+    }
+
+    fn show_popup_parts(actions: &[Action]) -> (Vec<u8>, Vec<String>) {
+        actions
+            .iter()
+            .find_map(|action| match action {
+                Action::SendPopup(DaemonMsg::ShowPopup {
+                    accents, labels, ..
+                }) => Some((labels.clone(), accents.clone())),
+                _ => None,
+            })
+            .expect("should have ShowPopup")
     }
 
     fn has_relay(actions: &[Action]) -> bool {
@@ -421,10 +470,14 @@ mod tests {
         })
     }
     fn has_show_popup(actions: &[Action]) -> bool {
-        actions.iter().any(|a| matches!(a, Action::SendPopup(DaemonMsg::ShowPopup { .. })))
+        actions
+            .iter()
+            .any(|a| matches!(a, Action::SendPopup(DaemonMsg::ShowPopup { .. })))
     }
     fn has_hide_popup(actions: &[Action]) -> bool {
-        actions.iter().any(|a| matches!(a, Action::SendPopup(DaemonMsg::HidePopup)))
+        actions
+            .iter()
+            .any(|a| matches!(a, Action::SendPopup(DaemonMsg::HidePopup)))
     }
 
     // === SPEC: Press accent key → emit immediately (zero latency) ===
@@ -469,7 +522,7 @@ mod tests {
         assert!(sm.is_idle(), "should return to idle");
     }
 
-    // === SPEC: Key repeat while holding → suppressed ===
+    // === SPEC: KeyCode repeat while holding → suppressed ===
 
     #[test]
     fn repeat_during_hold_is_suppressed() {
@@ -488,9 +541,18 @@ mod tests {
         sm.process_event(key_press(KEY_E));
         std::thread::sleep(std::time::Duration::from_millis(350));
         let actions = sm.check_timer();
-        assert!(has_show_popup(&actions), "popup should appear after threshold");
-        assert!(has_relay(&actions), "should emit synthetic key release to stop autorepeat");
-        assert!(!sm.is_idle(), "should not be idle (should be in popup state)");
+        assert!(
+            has_show_popup(&actions),
+            "popup should appear after threshold"
+        );
+        assert!(
+            has_relay(&actions),
+            "should emit synthetic key release to stop autorepeat"
+        );
+        assert!(
+            !sm.is_idle(),
+            "should not be idle (should be in popup state)"
+        );
     }
 
     // === SPEC: Timer doesn't fire before threshold ===
@@ -517,11 +579,19 @@ mod tests {
             Action::Relay(ev) => ev.code() == KEY_E && ev.value() == 0,
             _ => false,
         });
-        let popup_idx = actions.iter().position(|a| matches!(a, Action::SendPopup(DaemonMsg::ShowPopup { .. })));
+        let popup_idx = actions
+            .iter()
+            .position(|a| matches!(a, Action::SendPopup(DaemonMsg::ShowPopup { .. })));
 
-        assert!(release_idx.is_some(), "must emit key release to stop autorepeat");
+        assert!(
+            release_idx.is_some(),
+            "must emit key release to stop autorepeat"
+        );
         assert!(popup_idx.is_some(), "must show popup");
-        assert!(release_idx.unwrap() < popup_idx.unwrap(), "release must come before popup");
+        assert!(
+            release_idx.unwrap() < popup_idx.unwrap(),
+            "release must come before popup"
+        );
     }
 
     // === SPEC: In popup, press digit → select accent ===
@@ -536,7 +606,11 @@ mod tests {
         // Press '1' to select first accent (è for Italian 'e')
         let actions = sm.process_event(key_press(KEY_1));
         assert!(has_hide_popup(&actions), "popup should hide");
-        assert_eq!(has_emit_accent(&actions), Some("è"), "should emit first Italian 'e' accent");
+        assert_eq!(
+            has_emit_accent(&actions),
+            Some("è"),
+            "should emit first Italian 'e' accent"
+        );
         assert!(sm.is_idle());
     }
 
@@ -548,7 +622,11 @@ mod tests {
         sm.check_timer();
 
         let actions = sm.process_event(key_press(KEY_2));
-        assert_eq!(has_emit_accent(&actions), Some("é"), "should emit second Italian 'e' accent");
+        assert_eq!(
+            has_emit_accent(&actions),
+            Some("é"),
+            "should emit second Italian 'e' accent"
+        );
     }
 
     // === SPEC: In popup, out-of-range digit → no accent emitted ===
@@ -562,7 +640,10 @@ mod tests {
 
         // Italian 'e' has 4 accents, press 9
         let actions = sm.process_event(key_press(KEY_9));
-        assert!(has_emit_accent(&actions).is_none(), "should not emit accent for out-of-range digit");
+        assert!(
+            has_emit_accent(&actions).is_none(),
+            "should not emit accent for out-of-range digit"
+        );
         assert!(has_hide_popup(&actions), "popup should dismiss");
     }
 
@@ -577,7 +658,10 @@ mod tests {
 
         let actions = sm.process_event(key_press(KEY_ESC));
         assert!(has_hide_popup(&actions));
-        assert!(has_emit_accent(&actions).is_none(), "ESC should not emit any accent");
+        assert!(
+            has_emit_accent(&actions).is_none(),
+            "ESC should not emit any accent"
+        );
         assert!(sm.is_idle());
     }
 
@@ -701,10 +785,13 @@ mod tests {
         assert!(has_show_popup(&timer_actions));
 
         // Check the popup contains uppercase accents
-        let show = timer_actions.iter().find_map(|a| match a {
-            Action::SendPopup(DaemonMsg::ShowPopup { accents, .. }) => Some(accents),
-            _ => None,
-        }).expect("should have ShowPopup");
+        let show = timer_actions
+            .iter()
+            .find_map(|a| match a {
+                Action::SendPopup(DaemonMsg::ShowPopup { accents, .. }) => Some(accents),
+                _ => None,
+            })
+            .expect("should have ShowPopup");
         assert_eq!(show[0], "È");
         assert_eq!(show[1], "É");
     }
@@ -726,7 +813,7 @@ mod tests {
     fn non_key_events_always_relayed() {
         let mut sm = make_sm();
         // EV_SYN event
-        let syn = InputEvent::new(EventType::SYNCHRONIZATION, 0, 0);
+        let syn = InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0);
         let actions = sm.process_event(syn);
         assert!(has_relay(&actions));
     }
@@ -739,10 +826,13 @@ mod tests {
         sm.process_event(key_press(KEY_E));
         std::thread::sleep(std::time::Duration::from_millis(350));
         let actions = sm.check_timer();
-        let labels = actions.iter().find_map(|a| match a {
-            Action::SendPopup(DaemonMsg::ShowPopup { labels, .. }) => Some(labels),
-            _ => None,
-        }).expect("should have ShowPopup");
+        let labels = actions
+            .iter()
+            .find_map(|a| match a {
+                Action::SendPopup(DaemonMsg::ShowPopup { labels, .. }) => Some(labels),
+                _ => None,
+            })
+            .expect("should have ShowPopup");
         assert_eq!(labels[0], 1);
         assert_eq!(*labels.last().unwrap(), labels.len() as u8);
     }
@@ -755,10 +845,13 @@ mod tests {
         sm.process_event(key_press(KEY_A));
         std::thread::sleep(std::time::Duration::from_millis(350));
         let actions = sm.check_timer();
-        let accents = actions.iter().find_map(|a| match a {
-            Action::SendPopup(DaemonMsg::ShowPopup { accents, .. }) => Some(accents),
-            _ => None,
-        }).expect("should have ShowPopup");
+        let accents = actions
+            .iter()
+            .find_map(|a| match a {
+                Action::SendPopup(DaemonMsg::ShowPopup { accents, .. }) => Some(accents),
+                _ => None,
+            })
+            .expect("should have ShowPopup");
         assert_eq!(accents.len(), 5);
         assert_eq!(accents[0], "à");
     }
@@ -773,7 +866,10 @@ mod tests {
         sm.process_event(key_release(KEY_LEFTCTRL));
         // Now press 'e' — should start hold
         sm.process_event(key_press(KEY_E));
-        assert!(!sm.is_idle(), "should be in holding state after modifier released");
+        assert!(
+            !sm.is_idle(),
+            "should be in holding state after modifier released"
+        );
     }
 
     // === SPEC: IPC select → emit accent if in popup state ===
@@ -837,7 +933,10 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(60));
         let actions = sm.check_timer();
-        assert!(has_hide_popup(&actions), "popup should auto-dismiss after timeout");
+        assert!(
+            has_hide_popup(&actions),
+            "popup should auto-dismiss after timeout"
+        );
         assert!(sm.is_idle());
     }
 
@@ -862,5 +961,45 @@ mod tests {
         enter_popup(&mut sm);
         assert!(sm.next_deadline().is_some());
     }
-}
 
+    // === SPEC: unicode locale uses fixed slots with visible gaps ===
+
+    #[test]
+    fn unicode_popup_keeps_fixed_slot_labels() {
+        let mut sm = make_sm_unicode();
+        sm.process_event(key_press(KEY_C));
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        let actions = sm.check_timer();
+        let (labels, accents) = show_popup_parts(&actions);
+        // c: acute (2), circumflex (3), caron (9), cedilla (0).
+        assert_eq!(labels, vec![2, 3, 9, 0]);
+        assert_eq!(accents, vec!["ć", "ĉ", "č", "ç"]);
+    }
+
+    #[test]
+    fn unicode_selects_by_slot_digit() {
+        let mut sm = make_sm_unicode();
+        sm.process_event(key_press(KEY_C));
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        sm.check_timer();
+
+        // 0 selects the tenth slot: ç.
+        let actions = sm.process_event(key_press(KEY_0));
+        assert_eq!(has_emit_accent(&actions), Some("ç"));
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn unicode_empty_slot_digit_is_ignored() {
+        let mut sm = make_sm_unicode();
+        sm.process_event(key_press(KEY_C));
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        sm.check_timer();
+
+        // Slot 1 (grave) is empty for c, so 1 must not emit or dismiss.
+        let actions = sm.process_event(key_press(KEY_1));
+        assert!(has_emit_accent(&actions).is_none());
+        assert!(has_suppress(&actions));
+        assert!(!sm.is_idle());
+    }
+}

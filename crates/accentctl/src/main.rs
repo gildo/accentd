@@ -33,8 +33,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let socket_path = config::socket_path();
-    let stream = UnixStream::connect(&socket_path)
-        .with_context(|| format!("connecting to accentd at {}\nIs the daemon running?", socket_path.display()))?;
+    let stream = UnixStream::connect(&socket_path).with_context(|| {
+        format!(
+            "connecting to accentd at {}\nIs the daemon running?",
+            socket_path.display()
+        )
+    })?;
 
     let mut writer = stream.try_clone().context("cloning stream")?;
     let reader = BufReader::new(stream);

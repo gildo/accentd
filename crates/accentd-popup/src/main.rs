@@ -28,7 +28,13 @@ fn main() {
 
     info!("accentd-popup starting");
 
-    let config = Config::load().unwrap_or_default();
+    let config = match Config::load() {
+        Ok(config) => config,
+        Err(error) => {
+            warn!(%error, "failed to load config, using defaults");
+            Config::default()
+        }
+    };
     let font_size = config.popup.font_size;
 
     let app = gtk4::Application::builder()
@@ -41,7 +47,10 @@ fn main() {
         let initial = match ipc_client::connect() {
             Ok((rx, stream)) => {
                 info!("connected to accentd daemon");
-                Some(IpcState { rx, _stream: stream })
+                Some(IpcState {
+                    rx,
+                    _stream: stream,
+                })
             }
             Err(e) => {
                 warn!(error = %e, "failed to connect to daemon, will retry");
@@ -65,7 +74,9 @@ fn main() {
                 loop {
                     match ipc.rx.try_recv() {
                         Ok(msg) => match msg {
-                            DaemonMsg::ShowPopup { accents, labels, .. } => {
+                            DaemonMsg::ShowPopup {
+                                accents, labels, ..
+                            } => {
                                 window::show_popup(&pw, &pl, &accents, &labels);
                             }
                             DaemonMsg::HidePopup => {
@@ -86,12 +97,12 @@ fn main() {
                 let mut last = last_reconnect.borrow_mut();
                 if last.elapsed() >= Duration::from_secs(1) {
                     *last = Instant::now();
-                    match ipc_client::try_connect() {
-                        Ok((rx, stream)) => {
-                            info!("reconnected to accentd daemon");
-                            *state = Some(IpcState { rx, _stream: stream });
-                        }
-                        Err(_) => {}
+                    if let Ok((rx, stream)) = ipc_client::try_connect() {
+                        info!("reconnected to accentd daemon");
+                        *state = Some(IpcState {
+                            rx,
+                            _stream: stream,
+                        });
                     }
                 }
             }

@@ -8,8 +8,11 @@ use accentd_core::ipc::{self, ClientMsg, DaemonMsg};
 use anyhow::{Context, Result};
 use evdev::uinput::VirtualDevice;
 use state_machine::{Action, StateMachine};
+use std::fs;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::process;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, Mutex};
@@ -36,6 +39,16 @@ async fn main() -> Result<()> {
     info!("accentd starting");
 
     let config = Config::load().context("loading config")?;
+    // With `macos-order`, default to the macOS U.S. table when the user has no
+    // config file. An explicit `[locale] active` still wins.
+    #[cfg(feature = "macos-order")]
+    let config = if Config::config_path().exists() {
+        config
+    } else {
+        let mut config = config;
+        config.locale.active = "macos".into();
+        config
+    };
     let locale_map = config.load_locale_map().context("loading locale")?;
     info!(locale = %config.locale.active, keys = locale_map.len(), "locale loaded");
 
@@ -79,28 +92,41 @@ async fn main() -> Result<()> {
     // Start IPC listener
     let socket_path = config::socket_path();
     // Remove stale socket
-    let _ = std::fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&socket_path);
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        if let Err(e) = fs::create_dir_all(parent) {
+            warn!(error = %e, path = %parent.display(), "failed to create socket directory");
+        }
     }
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("binding socket {}", socket_path.display()))?;
-    // Make socket accessible by the user's session
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o666)).ok();
+    // The socket lives in the user's runtime directory. Owner-only access is
+    // enough because the popup and `accentctl` run as the same user.
+    if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
+        warn!(error = %e, "failed to restrict socket permissions");
     }
     info!(path = %socket_path.display(), "IPC socket listening");
+
+    // Only the socket owner may talk to the daemon. The file mode already
+    // enforces this; checking the peer uid keeps it true if the mode changes.
+    let socket_owner = fs::metadata(&socket_path).map(|meta| meta.uid()).ok();
 
     let shared_ipc = Arc::clone(&shared);
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
-                Ok((stream, _)) => {
-                    let shared = Arc::clone(&shared_ipc);
-                    tokio::spawn(handle_ipc_client(stream, shared));
-                }
+                Ok((stream, _)) => match stream.peer_cred() {
+                    Ok(cred) if Some(cred.uid()) == socket_owner => {
+                        let shared = Arc::clone(&shared_ipc);
+                        tokio::spawn(handle_ipc_client(stream, shared));
+                    }
+                    Ok(cred) => {
+                        warn!(uid = cred.uid(), "rejected IPC client from another user");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "rejected IPC client without peer credentials");
+                    }
+                },
                 Err(e) => {
                     warn!(error = %e, "IPC accept error");
                 }
@@ -119,7 +145,9 @@ async fn main() -> Result<()> {
         // Compute the earliest deadline across all state machines
         let deadline = {
             let shared = shared.lock().await;
-            shared.state_machines.iter()
+            shared
+                .state_machines
+                .iter()
                 .filter_map(|sm| sm.next_deadline())
                 .min()
         };
@@ -128,7 +156,9 @@ async fn main() -> Result<()> {
                 let tokio_instant = tokio::time::Instant::from_std(dl);
                 tokio::time::sleep_until(tokio_instant)
             }
-            None => tokio::time::sleep_until(tokio::time::Instant::now() + std::time::Duration::from_secs(86400)),
+            None => {
+                tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_secs(86400))
+            }
         };
         let has_deadline = deadline.is_some();
 
@@ -150,7 +180,7 @@ async fn main() -> Result<()> {
                         let elapsed = panic_ring[(oldest + 2) % 3].1.duration_since(panic_ring[oldest].1);
                         if elapsed.as_millis() < 1000 {
                             info!("panic key combo detected (Backspace→Escape→Enter), exiting");
-                            std::process::exit(0);
+                            process::exit(0);
                         }
                     }
                 }
@@ -177,7 +207,7 @@ async fn main() -> Result<()> {
     }
 
     info!("accentd shutting down");
-    let _ = std::fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&socket_path);
     Ok(())
 }
 
@@ -202,7 +232,6 @@ fn process_actions(shared: &mut Shared, actions: Vec<Action>) {
         }
     }
 }
-
 
 async fn handle_ipc_client(stream: UnixStream, shared: Arc<Mutex<Shared>>) {
     let (reader, mut writer) = stream.into_split();
@@ -242,10 +271,16 @@ async fn handle_ipc_client(stream: UnixStream, shared: Arc<Mutex<Shared>>) {
             ClientMsg::Select { index } => {
                 info!(index, "popup selection via IPC");
                 // Find the first SM in Popup state and select
-                let actions = shared.state_machines.iter_mut()
+                let actions = shared
+                    .state_machines
+                    .iter_mut()
                     .find_map(|sm| {
                         let a = sm.ipc_select(index);
-                        if a.is_empty() { None } else { Some(a) }
+                        if a.is_empty() {
+                            None
+                        } else {
+                            Some(a)
+                        }
                     })
                     .unwrap_or_default();
                 process_actions(&mut shared, actions);
@@ -264,7 +299,11 @@ async fn handle_ipc_client(stream: UnixStream, shared: Arc<Mutex<Shared>>) {
                 process_actions(&mut shared, all_actions);
             }
             ClientMsg::Toggle => {
-                let new_state = !shared.state_machines.first().map(|s| s.is_enabled()).unwrap_or(true);
+                let new_state = !shared
+                    .state_machines
+                    .first()
+                    .map(|s| s.is_enabled())
+                    .unwrap_or(true);
                 for sm in &mut shared.state_machines {
                     sm.set_enabled(new_state);
                 }
@@ -318,7 +357,11 @@ async fn handle_ipc_client(stream: UnixStream, shared: Arc<Mutex<Shared>>) {
                 }
             }
             ClientMsg::GetStatus => {
-                let enabled = shared.state_machines.first().map(|s| s.is_enabled()).unwrap_or(false);
+                let enabled = shared
+                    .state_machines
+                    .first()
+                    .map(|s| s.is_enabled())
+                    .unwrap_or(false);
                 let status = DaemonMsg::Status {
                     enabled,
                     locale: shared.config.locale.active.clone(),

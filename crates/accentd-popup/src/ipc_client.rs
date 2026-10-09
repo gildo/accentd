@@ -46,7 +46,9 @@ pub fn connect() -> Result<(std_mpsc::Receiver<DaemonMsg>, UnixStream)> {
     let stream = {
         let mut result = UnixStream::connect(&socket_path);
         for _ in 0..9 {
-            if result.is_ok() { break; }
+            if result.is_ok() {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(500));
             result = UnixStream::connect(&socket_path);
         }

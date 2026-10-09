@@ -1,6 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use evdev::uinput::VirtualDevice;
-use evdev::{EventType, InputEvent, Key};
+use evdev::{EventType, InputEvent, KeyCode};
+use std::thread;
 use std::time::Duration;
 
 pub trait EventEmitter {
@@ -30,24 +31,24 @@ const DELAY_BETWEEN_EMITS: Duration = Duration::from_millis(3);
 const DELAY_AFTER_CHORD: Duration = Duration::from_millis(5);
 
 fn syn() -> InputEvent {
-    InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)
+    InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0)
 }
 
 /// Tap a key: press, sleep, release, sleep. Each half needs its own emit so the
 /// kernel processes the state change before the next event.
-fn tap_key(emitter: &mut impl EventEmitter, key: Key) -> Result<()> {
-    emitter.emit_events(&[InputEvent::new(EventType::KEY, key.code(), 1), syn()])?;
-    std::thread::sleep(DELAY_BETWEEN_EMITS);
-    emitter.emit_events(&[InputEvent::new(EventType::KEY, key.code(), 0), syn()])?;
-    std::thread::sleep(DELAY_BETWEEN_EMITS);
+fn tap_key(emitter: &mut impl EventEmitter, key: KeyCode) -> Result<()> {
+    emitter.emit_events(&[InputEvent::new(EventType::KEY.0, key.code(), 1), syn()])?;
+    thread::sleep(DELAY_BETWEEN_EMITS);
+    emitter.emit_events(&[InputEvent::new(EventType::KEY.0, key.code(), 0), syn()])?;
+    thread::sleep(DELAY_BETWEEN_EMITS);
     Ok(())
 }
 
 /// Press or release a single key + syn, then sleep.
-fn hold_key(emitter: &mut impl EventEmitter, key: Key, press: bool) -> Result<()> {
+fn hold_key(emitter: &mut impl EventEmitter, key: KeyCode, press: bool) -> Result<()> {
     let val = if press { 1 } else { 0 };
-    emitter.emit_events(&[InputEvent::new(EventType::KEY, key.code(), val), syn()])?;
-    std::thread::sleep(DELAY_BETWEEN_EMITS);
+    emitter.emit_events(&[InputEvent::new(EventType::KEY.0, key.code(), val), syn()])?;
+    thread::sleep(DELAY_BETWEEN_EMITS);
     Ok(())
 }
 
@@ -62,63 +63,71 @@ fn hold_key(emitter: &mut impl EventEmitter, key: Key, press: bool) -> Result<()
 /// NOTE: Ctrl+Shift+U works in GTK and Qt apps. It may fail in Electron apps,
 /// some terminal emulators, and other toolkits that don't support this input method.
 pub fn emit_accent(emitter: &mut impl EventEmitter, accent: &str) -> Result<()> {
-    let c = accent.chars().next().unwrap_or(' ');
+    let c = accent.chars().next().context("accent string is empty")?;
     let hex = format!("{:04x}", c as u32);
 
-    // Wait for popup to hide and focus to return
-    std::thread::sleep(DELAY_POPUP_HIDE);
+    // Wait for popup to hide and focus to return.
+    thread::sleep(DELAY_POPUP_HIDE);
 
     // Phase 1: delete the base character
-    tap_key(emitter, Key::KEY_BACKSPACE)?;
-    std::thread::sleep(DELAY_AFTER_BACKSPACE);
+    tap_key(emitter, KeyCode::KEY_BACKSPACE)?;
+    thread::sleep(DELAY_AFTER_BACKSPACE);
 
     // Phase 2: Ctrl+Shift+U chord — each modifier and the U tap need separate
     // emits so the kernel registers the state changes in order
-    hold_key(emitter, Key::KEY_LEFTCTRL, true)?;
-    hold_key(emitter, Key::KEY_LEFTSHIFT, true)?;
-    tap_key(emitter, Key::KEY_U)?;
-    hold_key(emitter, Key::KEY_LEFTSHIFT, false)?;
-    hold_key(emitter, Key::KEY_LEFTCTRL, false)?;
-    std::thread::sleep(DELAY_AFTER_CHORD);
+    hold_key(emitter, KeyCode::KEY_LEFTCTRL, true)?;
+    hold_key(emitter, KeyCode::KEY_LEFTSHIFT, true)?;
+    tap_key(emitter, KeyCode::KEY_U)?;
+    hold_key(emitter, KeyCode::KEY_LEFTSHIFT, false)?;
+    hold_key(emitter, KeyCode::KEY_LEFTCTRL, false)?;
+    thread::sleep(DELAY_AFTER_CHORD);
 
     // Phase 3: hex digits + Enter, batched in a single emit (no inter-event
     // delays needed — Unicode input mode is already active)
     let mut events = Vec::with_capacity((hex.len() + 1) * 4);
     for digit in hex.chars() {
         let key = hex_char_to_key(digit);
-        events.push(InputEvent::new(EventType::KEY, key.code(), 1));
+        events.push(InputEvent::new(EventType::KEY.0, key.code(), 1));
         events.push(syn());
-        events.push(InputEvent::new(EventType::KEY, key.code(), 0));
+        events.push(InputEvent::new(EventType::KEY.0, key.code(), 0));
         events.push(syn());
     }
-    events.push(InputEvent::new(EventType::KEY, Key::KEY_ENTER.code(), 1));
+    events.push(InputEvent::new(
+        EventType::KEY.0,
+        KeyCode::KEY_ENTER.code(),
+        1,
+    ));
     events.push(syn());
-    events.push(InputEvent::new(EventType::KEY, Key::KEY_ENTER.code(), 0));
+    events.push(InputEvent::new(
+        EventType::KEY.0,
+        KeyCode::KEY_ENTER.code(),
+        0,
+    ));
     events.push(syn());
     emitter.emit_events(&events)?;
 
     Ok(())
 }
 
-fn hex_char_to_key(c: char) -> Key {
+fn hex_char_to_key(c: char) -> KeyCode {
     match c {
-        '0' => Key::KEY_0,
-        '1' => Key::KEY_1,
-        '2' => Key::KEY_2,
-        '3' => Key::KEY_3,
-        '4' => Key::KEY_4,
-        '5' => Key::KEY_5,
-        '6' => Key::KEY_6,
-        '7' => Key::KEY_7,
-        '8' => Key::KEY_8,
-        '9' => Key::KEY_9,
-        'a' => Key::KEY_A,
-        'b' => Key::KEY_B,
-        'c' => Key::KEY_C,
-        'd' => Key::KEY_D,
-        'e' => Key::KEY_E,
-        'f' => Key::KEY_F,
-        _ => Key::KEY_0,
+        '0' => KeyCode::KEY_0,
+        '1' => KeyCode::KEY_1,
+        '2' => KeyCode::KEY_2,
+        '3' => KeyCode::KEY_3,
+        '4' => KeyCode::KEY_4,
+        '5' => KeyCode::KEY_5,
+        '6' => KeyCode::KEY_6,
+        '7' => KeyCode::KEY_7,
+        '8' => KeyCode::KEY_8,
+        '9' => KeyCode::KEY_9,
+        'a' => KeyCode::KEY_A,
+        'b' => KeyCode::KEY_B,
+        'c' => KeyCode::KEY_C,
+        'd' => KeyCode::KEY_D,
+        'e' => KeyCode::KEY_E,
+        'f' => KeyCode::KEY_F,
+        _ => unreachable!("not a hex digit: {c}"),
     }
 }
 
@@ -132,7 +141,9 @@ mod tests {
 
     impl RecordingEmitter {
         fn new() -> Self {
-            Self { batches: Vec::new() }
+            Self {
+                batches: Vec::new(),
+            }
         }
 
         /// Extract (key_code, value) pairs from a batch, filtering out SYN events.
@@ -167,8 +178,8 @@ mod tests {
         let mut mock = RecordingEmitter::new();
         emit_accent(&mut mock, "è").unwrap();
         // Batch 2 = Ctrl↓, batch 3 = Shift↓ (after BS↓, BS↑)
-        assert_eq!(mock.key_events(2), vec![(Key::KEY_LEFTCTRL.code(), 1)]);
-        assert_eq!(mock.key_events(3), vec![(Key::KEY_LEFTSHIFT.code(), 1)]);
+        assert_eq!(mock.key_events(2), vec![(KeyCode::KEY_LEFTCTRL.code(), 1)]);
+        assert_eq!(mock.key_events(3), vec![(KeyCode::KEY_LEFTSHIFT.code(), 1)]);
     }
 
     #[test]
@@ -176,8 +187,8 @@ mod tests {
         let mut mock = RecordingEmitter::new();
         emit_accent(&mut mock, "è").unwrap();
         // After U tap (batches 4,5), Shift↑ = batch 6, Ctrl↑ = batch 7
-        assert_eq!(mock.key_events(6), vec![(Key::KEY_LEFTSHIFT.code(), 0)]);
-        assert_eq!(mock.key_events(7), vec![(Key::KEY_LEFTCTRL.code(), 0)]);
+        assert_eq!(mock.key_events(6), vec![(KeyCode::KEY_LEFTSHIFT.code(), 0)]);
+        assert_eq!(mock.key_events(7), vec![(KeyCode::KEY_LEFTCTRL.code(), 0)]);
     }
 
     #[test]
@@ -185,11 +196,11 @@ mod tests {
         let mut mock = RecordingEmitter::new();
         emit_accent(&mut mock, "è").unwrap();
         // Backspace tap = batches 0 (press) and 1 (release)
-        assert_eq!(mock.key_events(0), vec![(Key::KEY_BACKSPACE.code(), 1)]);
-        assert_eq!(mock.key_events(1), vec![(Key::KEY_BACKSPACE.code(), 0)]);
+        assert_eq!(mock.key_events(0), vec![(KeyCode::KEY_BACKSPACE.code(), 1)]);
+        assert_eq!(mock.key_events(1), vec![(KeyCode::KEY_BACKSPACE.code(), 0)]);
         // U tap = batches 4 (press) and 5 (release)
-        assert_eq!(mock.key_events(4), vec![(Key::KEY_U.code(), 1)]);
-        assert_eq!(mock.key_events(5), vec![(Key::KEY_U.code(), 0)]);
+        assert_eq!(mock.key_events(4), vec![(KeyCode::KEY_U.code(), 1)]);
+        assert_eq!(mock.key_events(5), vec![(KeyCode::KEY_U.code(), 0)]);
     }
 
     #[test]
@@ -210,26 +221,26 @@ mod tests {
         let events = mock.all_key_events();
         let expected = vec![
             // BS tap
-            (Key::KEY_BACKSPACE.code(), 1),
-            (Key::KEY_BACKSPACE.code(), 0),
+            (KeyCode::KEY_BACKSPACE.code(), 1),
+            (KeyCode::KEY_BACKSPACE.code(), 0),
             // Ctrl+Shift+U chord
-            (Key::KEY_LEFTCTRL.code(), 1),
-            (Key::KEY_LEFTSHIFT.code(), 1),
-            (Key::KEY_U.code(), 1),
-            (Key::KEY_U.code(), 0),
-            (Key::KEY_LEFTSHIFT.code(), 0),
-            (Key::KEY_LEFTCTRL.code(), 0),
+            (KeyCode::KEY_LEFTCTRL.code(), 1),
+            (KeyCode::KEY_LEFTSHIFT.code(), 1),
+            (KeyCode::KEY_U.code(), 1),
+            (KeyCode::KEY_U.code(), 0),
+            (KeyCode::KEY_LEFTSHIFT.code(), 0),
+            (KeyCode::KEY_LEFTCTRL.code(), 0),
             // hex 00e8 + Enter
-            (Key::KEY_0.code(), 1),
-            (Key::KEY_0.code(), 0),
-            (Key::KEY_0.code(), 1),
-            (Key::KEY_0.code(), 0),
-            (Key::KEY_E.code(), 1),
-            (Key::KEY_E.code(), 0),
-            (Key::KEY_8.code(), 1),
-            (Key::KEY_8.code(), 0),
-            (Key::KEY_ENTER.code(), 1),
-            (Key::KEY_ENTER.code(), 0),
+            (KeyCode::KEY_0.code(), 1),
+            (KeyCode::KEY_0.code(), 0),
+            (KeyCode::KEY_0.code(), 1),
+            (KeyCode::KEY_0.code(), 0),
+            (KeyCode::KEY_E.code(), 1),
+            (KeyCode::KEY_E.code(), 0),
+            (KeyCode::KEY_8.code(), 1),
+            (KeyCode::KEY_8.code(), 0),
+            (KeyCode::KEY_ENTER.code(), 1),
+            (KeyCode::KEY_ENTER.code(), 0),
         ];
         assert_eq!(events, expected);
     }
@@ -240,7 +251,8 @@ mod tests {
         emit_accent(&mut mock, "è").unwrap();
         // è = U+00E8 → hex digits in last batch should be KEY_0, KEY_0, KEY_E, KEY_8
         let last = mock.batches.len() - 1;
-        let hex_keys: Vec<u16> = mock.key_events(last)
+        let hex_keys: Vec<u16> = mock
+            .key_events(last)
             .iter()
             .filter(|(_, v)| *v == 1) // just presses
             .map(|(c, _)| *c)
@@ -249,32 +261,32 @@ mod tests {
         assert_eq!(
             hex_keys,
             vec![
-                Key::KEY_0.code(),
-                Key::KEY_0.code(),
-                Key::KEY_E.code(),
-                Key::KEY_8.code(),
-                Key::KEY_ENTER.code(),
+                KeyCode::KEY_0.code(),
+                KeyCode::KEY_0.code(),
+                KeyCode::KEY_E.code(),
+                KeyCode::KEY_8.code(),
+                KeyCode::KEY_ENTER.code(),
             ]
         );
     }
 
     #[test]
     fn hex_char_to_key_maps_all_hex_digits() {
-        assert_eq!(hex_char_to_key('0'), Key::KEY_0);
-        assert_eq!(hex_char_to_key('1'), Key::KEY_1);
-        assert_eq!(hex_char_to_key('2'), Key::KEY_2);
-        assert_eq!(hex_char_to_key('3'), Key::KEY_3);
-        assert_eq!(hex_char_to_key('4'), Key::KEY_4);
-        assert_eq!(hex_char_to_key('5'), Key::KEY_5);
-        assert_eq!(hex_char_to_key('6'), Key::KEY_6);
-        assert_eq!(hex_char_to_key('7'), Key::KEY_7);
-        assert_eq!(hex_char_to_key('8'), Key::KEY_8);
-        assert_eq!(hex_char_to_key('9'), Key::KEY_9);
-        assert_eq!(hex_char_to_key('a'), Key::KEY_A);
-        assert_eq!(hex_char_to_key('b'), Key::KEY_B);
-        assert_eq!(hex_char_to_key('c'), Key::KEY_C);
-        assert_eq!(hex_char_to_key('d'), Key::KEY_D);
-        assert_eq!(hex_char_to_key('e'), Key::KEY_E);
-        assert_eq!(hex_char_to_key('f'), Key::KEY_F);
+        assert_eq!(hex_char_to_key('0'), KeyCode::KEY_0);
+        assert_eq!(hex_char_to_key('1'), KeyCode::KEY_1);
+        assert_eq!(hex_char_to_key('2'), KeyCode::KEY_2);
+        assert_eq!(hex_char_to_key('3'), KeyCode::KEY_3);
+        assert_eq!(hex_char_to_key('4'), KeyCode::KEY_4);
+        assert_eq!(hex_char_to_key('5'), KeyCode::KEY_5);
+        assert_eq!(hex_char_to_key('6'), KeyCode::KEY_6);
+        assert_eq!(hex_char_to_key('7'), KeyCode::KEY_7);
+        assert_eq!(hex_char_to_key('8'), KeyCode::KEY_8);
+        assert_eq!(hex_char_to_key('9'), KeyCode::KEY_9);
+        assert_eq!(hex_char_to_key('a'), KeyCode::KEY_A);
+        assert_eq!(hex_char_to_key('b'), KeyCode::KEY_B);
+        assert_eq!(hex_char_to_key('c'), KeyCode::KEY_C);
+        assert_eq!(hex_char_to_key('d'), KeyCode::KEY_D);
+        assert_eq!(hex_char_to_key('e'), KeyCode::KEY_E);
+        assert_eq!(hex_char_to_key('f'), KeyCode::KEY_F);
     }
 }

@@ -53,9 +53,8 @@ Communication is via a Unix socket with JSON-lines messages.
 ```bash
 paru -S accentd   # or yay -S accentd
 
-# Then enable
-sudo systemctl enable --now accentd
-systemctl --user enable --now accentd-popup
+# Then enable (both are user services, no root)
+systemctl --user enable --now accentd accentd-popup
 ```
 
 Your user must be in the `input` group (log out and back in after):
@@ -64,9 +63,38 @@ Your user must be in the `input` group (log out and back in after):
 sudo usermod -aG input $USER
 ```
 
+### Ubuntu / Debian
+
+Install the build dependencies (Ubuntu 24.04+; on older releases the
+layer-shell development package is `libgtk-layer-shell-dev`):
+
+```bash
+sudo apt update
+sudo apt install -y build-essential pkg-config libgtk-4-dev libgtk4-layer-shell-dev
+```
+
+Install the Rust toolchain if you do not have it:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then follow [From source](#from-source-any-distro) to build and install. The
+resulting `accentd` runs as a user service, not as root.
+
 ### From source (any distro)
 
 Requirements: Rust toolchain, GTK4, gtk4-layer-shell
+
+The daemon runs as a user service, not as root, so it never needs system-wide
+privileges at runtime. It does need read access to `/dev/input/event*` and
+write access to `/dev/uinput`, which the `input` group provides:
+
+```bash
+sudo usermod -aG input "$USER"   # log out and back in afterwards
+```
+
+Build and install:
 
 ```bash
 cargo build --release
@@ -76,24 +104,37 @@ sudo install -Dm755 target/release/accentd /usr/bin/accentd
 sudo install -Dm755 target/release/accentd-popup /usr/bin/accentd-popup
 sudo install -Dm755 target/release/accentctl /usr/bin/accentctl
 
-# Install locale data
+# Install locale data (optional; the same locales are compiled in)
 sudo install -dm755 /usr/share/accentd/locales
 sudo install -Dm644 data/locales/*.toml /usr/share/accentd/locales/
 
-# Install systemd services
-sudo install -Dm644 dist/accentd.service /usr/lib/systemd/system/accentd.service
+# Install user services
+install -Dm644 dist/accentd.service ~/.config/systemd/user/accentd.service
 install -Dm644 dist/accentd-popup.service ~/.config/systemd/user/accentd-popup.service
 
 # Install udev rule (allows access to /dev/uinput)
 sudo install -Dm644 dist/70-accentd.rules /usr/lib/udev/rules.d/70-accentd.rules
 sudo udevadm control --reload-rules
 
-# Enable
-sudo systemctl enable --now accentd
-systemctl --user enable --now accentd-popup
+# Enable (both run in your user session)
+systemctl --user enable --now accentd accentd-popup
 ```
 
 The daemon needs access to `/dev/input/event*` and `/dev/uinput`. The included udev rule handles this. Your user must be in the `input` group (log out and back in after `usermod`).
+
+### macOS accent order
+
+The active locale decides the variants and their order, so
+`accentctl set-locale de` gives the German list (where `ä`, `ö` and `ü` are all
+`1`). The macOS U.S./ABC list ships as the `macos` locale:
+`accentctl set-locale macos`.
+
+Build with the `macos-order` feature to make `macos` the default when no config
+file exists:
+
+```bash
+cargo build --release --features accentd/macos-order
+```
 
 ## Usage
 
@@ -132,7 +173,14 @@ active = "it"
 
 ## Locales
 
-Built-in: **it** (Italian), **es** (Spanish), **fr** (French), **de** (German), **pt** (Portuguese)
+Language locales: **it** (Italian), **es** (Spanish), **fr** (French), **de** (German), **pt** (Portuguese). These use compact per-letter lists, ordered so the language's accents line up (for German, `ä`, `ö` and `ü` are all `1`).
+
+Two more built-in locales:
+
+- **macos** -- the U.S./ABC lists from Apple's `PressAndHold.plist`, so the numbers match a Mac. Compact, but not accent-aligned (`ä` is `4`, `ö`/`ü` are `2`).
+- **unicode** -- every precomposed Latin letter, generated from Unicode composition. The accent sits in a fixed slot across all letters, so the same accent is always the same number. Missing accents leave holes: `c` shows `2:ć 3:ĉ 9:č 0:ç`. Slots are `1` grave, `2` acute, `3` circumflex, `4` tilde, `5` diaeresis, `6` ring, `7` macron, `8` breve, `9` caron, `0` cedilla. The first nine use the number row, the tenth is `0`.
+
+Switch with `accentctl set-locale <name>`, for example `accentctl set-locale de` or `accentctl set-locale unicode`.
 
 Custom locales can be added as TOML files in `~/.config/accentd/locales/` or `/usr/share/accentd/locales/`:
 

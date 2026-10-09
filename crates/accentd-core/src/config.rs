@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -22,8 +24,12 @@ pub struct GeneralConfig {
 }
 
 impl GeneralConfig {
-    fn default_threshold() -> u64 { 300 }
-    fn default_enabled() -> bool { true }
+    fn default_threshold() -> u64 {
+        300
+    }
+    fn default_enabled() -> bool {
+        true
+    }
 }
 
 impl Default for GeneralConfig {
@@ -46,9 +52,15 @@ pub struct PopupConfig {
 }
 
 impl PopupConfig {
-    fn default_font_size() -> u32 { 24 }
-    fn default_timeout() -> u64 { 5000 }
-    fn default_keep_open() -> bool { true }
+    fn default_font_size() -> u32 {
+        24
+    }
+    fn default_timeout() -> u64 {
+        5000
+    }
+    fn default_keep_open() -> bool {
+        true
+    }
 }
 
 impl Default for PopupConfig {
@@ -70,7 +82,9 @@ pub struct LocaleConfig {
 }
 
 impl LocaleConfig {
-    fn default_active() -> String { "it".into() }
+    fn default_active() -> String {
+        "it".into()
+    }
 }
 
 impl Default for LocaleConfig {
@@ -103,12 +117,16 @@ impl Config {
     }
 
     pub fn load_from(path: &Path) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)
+        let contents = fs::read_to_string(path)
             .with_context(|| format!("reading config from {}", path.display()))?;
         toml::from_str(&contents).with_context(|| "parsing config TOML")
     }
 
     pub fn load_locale_map(&self) -> Result<HashMap<String, Vec<String>>> {
+        if !is_safe_locale_name(&self.locale.active) {
+            anyhow::bail!("invalid locale name '{}'", self.locale.active);
+        }
+
         // Inline locales from config file
         if let Some(locale_map) = self.locale.locales.get(&self.locale.active) {
             if !locale_map.is_empty() {
@@ -123,7 +141,7 @@ impl Config {
         ] {
             let path = dir.join(format!("{}.toml", self.locale.active));
             if path.exists() {
-                let contents = std::fs::read_to_string(&path)
+                let contents = fs::read_to_string(&path)
                     .with_context(|| format!("reading locale {}", path.display()))?;
                 return toml::from_str(&contents).with_context(|| "parsing locale TOML");
             }
@@ -139,13 +157,30 @@ impl Config {
     }
 }
 
+/// Return the path to the daemon's Unix socket.
+///
+/// `ACCENTD_SOCK` overrides the path for testing. The default lives in the
+/// per-user runtime directory because `accentd` runs as a user service. A
+/// system-wide path is used only when no runtime directory is available.
 pub fn socket_path() -> PathBuf {
-    // ACCENTD_SOCK env var overrides for testing.
-    // Default: /run/accentd/accentd.sock (created by RuntimeDirectory=accentd in systemd).
-    if let Ok(path) = std::env::var("ACCENTD_SOCK") {
+    if let Ok(path) = env::var("ACCENTD_SOCK") {
         return PathBuf::from(path);
     }
+    if let Some(runtime) = dirs::runtime_dir() {
+        return runtime.join("accentd").join("accentd.sock");
+    }
     PathBuf::from("/run/accentd/accentd.sock")
+}
+
+/// Return true when `name` is a safe locale identifier.
+///
+/// Only ASCII alphanumerics, `-` and `_` are accepted, so a name can never
+/// escape the locale directories with `..` or a path separator.
+fn is_safe_locale_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 #[cfg(test)]
@@ -249,6 +284,37 @@ active = "fr"
         let mut config = Config::default();
         config.locale.active = "zz".into();
         assert!(config.load_locale_map().is_err());
+    }
+
+    #[test]
+    fn load_locale_map_rejects_path_traversal() {
+        let mut config = Config::default();
+        config.locale.active = "../evil".into();
+        assert!(config.load_locale_map().is_err());
+    }
+
+    #[test]
+    fn load_locale_map_loads_macos_locale() {
+        let mut config = Config::default();
+        config.locale.active = "macos".into();
+        let map = config.load_locale_map().unwrap();
+        assert_eq!(map["a"], vec!["à", "á", "â", "ä", "æ", "ã", "å", "ā"]);
+    }
+
+    // --- spec: locale names must be safe identifiers ---
+
+    #[test]
+    fn is_safe_locale_name_accepts_plain_names() {
+        for name in ["it", "pt-BR", "custom_1"] {
+            assert!(is_safe_locale_name(name), "{name} should be safe");
+        }
+    }
+
+    #[test]
+    fn is_safe_locale_name_rejects_traversal_and_separators() {
+        for name in ["", "..", "../evil", "a/b", "a\\b", "a.toml"] {
+            assert!(!is_safe_locale_name(name), "{name} should be rejected");
+        }
     }
 
     // --- spec: socket path ---

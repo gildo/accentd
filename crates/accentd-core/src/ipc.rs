@@ -126,7 +126,11 @@ mod tests {
         let encoded = encode(&msg);
         let decoded = decode_daemon(&encoded).expect("should decode");
         match decoded {
-            DaemonMsg::ShowPopup { base, accents, labels } => {
+            DaemonMsg::ShowPopup {
+                base,
+                accents,
+                labels,
+            } => {
                 assert_eq!(base, "e");
                 assert_eq!(accents, vec!["è", "é", "ê"]);
                 assert_eq!(labels, vec![1, 2, 3]);
@@ -145,7 +149,11 @@ mod tests {
         let encoded = encode(&msg);
         let decoded = decode_daemon(&encoded).expect("should decode");
         match decoded {
-            DaemonMsg::Status { enabled, locale, version } => {
+            DaemonMsg::Status {
+                enabled,
+                locale,
+                version,
+            } => {
                 assert!(enabled);
                 assert_eq!(locale, "it");
                 assert_eq!(version, "0.1.0");
@@ -156,7 +164,10 @@ mod tests {
 
     #[test]
     fn daemon_msg_ack_round_trips() {
-        let msg = DaemonMsg::Ack { ok: false, message: "error".into() };
+        let msg = DaemonMsg::Ack {
+            ok: false,
+            message: "error".into(),
+        };
         let encoded = encode(&msg);
         let decoded = decode_daemon(&encoded).expect("should decode");
         match decoded {
@@ -181,7 +192,9 @@ mod tests {
 
     #[test]
     fn client_msg_set_locale_round_trips() {
-        let msg = ClientMsg::SetLocale { locale: "fr".into() };
+        let msg = ClientMsg::SetLocale {
+            locale: "fr".into(),
+        };
         let encoded = encode(&msg);
         let decoded = decode_client(&encoded).expect("should decode");
         match decoded {
@@ -201,7 +214,11 @@ mod tests {
             ClientMsg::RegisterPopup,
         ] {
             let encoded = encode(&msg);
-            assert!(decode_client(&encoded).is_some(), "failed to round-trip: {:?}", msg);
+            assert!(
+                decode_client(&encoded).is_some(),
+                "failed to round-trip: {:?}",
+                msg
+            );
         }
     }
 

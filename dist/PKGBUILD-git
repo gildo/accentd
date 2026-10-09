@@ -46,7 +46,7 @@ package() {
     install -Dm0755 target/release/accentd-popup "$pkgdir/usr/bin/accentd-popup"
     install -Dm0755 target/release/accentctl "$pkgdir/usr/bin/accentctl"
 
-    install -Dm644 dist/accentd.service "$pkgdir/usr/lib/systemd/system/accentd.service"
+    install -Dm644 dist/accentd.service "$pkgdir/usr/lib/systemd/user/accentd.service"
     install -Dm644 dist/accentd-popup.service "$pkgdir/usr/lib/systemd/user/accentd-popup.service"
     install -Dm644 dist/70-accentd.rules "$pkgdir/usr/lib/udev/rules.d/70-accentd.rules"
 
